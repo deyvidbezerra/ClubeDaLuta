@@ -1,4 +1,4 @@
-package Luta;
+package Luta.Personagem;
 
 import java.util.ArrayList;
 import java.util.List;

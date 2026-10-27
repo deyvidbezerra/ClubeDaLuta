@@ -1,4 +1,4 @@
-package Luta;
+package Luta.Personagem;
 
 public class Habilidade {
 
