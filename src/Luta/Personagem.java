@@ -7,19 +7,26 @@ public abstract class Personagem {
 
     // ===== ATRIBUTOS =====
     private static final int MAX_HABILIDADES = 4;   // 3 golpes + 1 especial
+    private static final int VELOCIDADE_PADRAO = 10;
 
     private final String nome;
     private final String cor;
     private final int vidaMaxima;
     private final int especialMaximo;
+    private final int velocidade;
     private final List<Habilidade> habilidades = new ArrayList<>();
 
     private int vida;
     private int especial;
     private boolean defendendo;
 
-    // ===== CONSTRUTOR =====
+    // ===== CONSTRUTORES =====
     protected Personagem(String nome, String cor, int vidaMaxima, int especialMaximo) {
+        this(nome, cor, vidaMaxima, especialMaximo, VELOCIDADE_PADRAO);
+    }
+
+    // Construtor novo, com velocidade
+    protected Personagem(String nome, String cor, int vidaMaxima, int especialMaximo, int velocidade) {
         if (nome == null || nome.isBlank()) {
             throw new IllegalArgumentException("Nome é obrigatório");
         }
@@ -29,10 +36,14 @@ public abstract class Personagem {
         if (especialMaximo < 0) {
             throw new IllegalArgumentException("Especial máximo não pode ser negativo");
         }
+        if (velocidade < 0) {
+            throw new IllegalArgumentException("Velocidade não pode ser negativa");
+        }
         this.nome = nome;
         this.cor = cor;
         this.vidaMaxima = vidaMaxima;
         this.especialMaximo = especialMaximo;
+        this.velocidade = velocidade;
         this.vida = vidaMaxima;   // começa com a vida cheia
         this.especial = 0;        // começa sem especial
         this.defendendo = false;
@@ -124,10 +135,11 @@ public abstract class Personagem {
     public int getVidaMaxima() { return vidaMaxima; }
     public int getEspecial() { return especial; }
     public int getEspecialMaximo() { return especialMaximo; }
+    public int getVelocidade() { return velocidade; }
 
     @Override
     public String toString() {
         return nome + " [" + vida + "/" + vidaMaxima + " HP | "
-                + especial + "/" + especialMaximo + " SP]";
+                + especial + "/" + especialMaximo + " SP | VEL " + velocidade + "]";
     }
 }
