@@ -1,37 +1,64 @@
 package Luta;
 
-import java.util.Scanner;
+import Luta.Jogo.MenuSelecao;
+import Luta.Jogo.PainelJogo;
+import Luta.Personagem.Personagem;
 
-public class main {
+import javax.swing.JFrame;
+import javax.swing.JOptionPane;
+import javax.swing.SwingUtilities;
+import java.util.function.Supplier;
+
+/**
+ * Ponto de entrada: abre o menu de seleção de personagem e, depois que os dois jogadores escolhem,
+ * troca para a luta. Na luta, M (ou ESC) volta ao menu.
+ */
+public class Main {
 
     public static void main(String[] args) {
-        Scanner scanner = new Scanner(System.in);
+        // Swing deve ser criado na thread de eventos (EDT)
+        SwingUtilities.invokeLater(() -> {
+            try {
+                JFrame janela = new JFrame("Clube da Luta");
+                janela.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
 
-        System.out.println("=== CLUBE DA LUTA ===");
-        Personagem p1 = escolherPersonagem(scanner, "Jogador 1");
-        Personagem p2 = escolherPersonagem(scanner, "Jogador 2");
+                MenuSelecao menu = criarMenu(janela);
+                janela.setContentPane(menu);
+                janela.pack();                       // usa o tamanho preferido do painel (1000x600)
+                janela.setLocationRelativeTo(null);  // centraliza na tela
+                janela.setVisible(true);
 
-        Luta partida = new Luta(p1, p2, scanner);
-        partida.iniciar();
-
-        scanner.close();
+                menu.iniciar();
+            } catch (IllegalStateException e) {
+                JOptionPane.showMessageDialog(null, e.getMessage(), "Erro ao iniciar", JOptionPane.ERROR_MESSAGE);
+            }
+        });
     }
 
-    private static Personagem escolherPersonagem(Scanner scanner, String jogador) {
-        System.out.println("\n" + jogador + ", escolha seu personagem:");
-        System.out.println("1 - Aqua");
-        System.out.println("2 - Crys");
-        System.out.println("3 - Jiu");
-        System.out.println("4 - Keno");
+    private static MenuSelecao criarMenu(JFrame janela) {
+        return new MenuSelecao((p1, p2) -> iniciarLuta(janela, p1, p2));
+    }
 
-        int opcao = Luta.lerOpcao(scanner, 1, 4);
+    private static void mostrarMenu(JFrame janela) {
+        MenuSelecao menu = criarMenu(janela);
+        trocarTela(janela, menu);
+        menu.iniciar();
+    }
 
-        // cria uma instância nova a cada escolha (os dois podem escolher o mesmo)
-        switch (opcao) {
-            case 1:  return new Aqua();
-            case 2:  return new Crys();
-            case 3:  return new Jiu();
-            default: return new Keno();
+    private static void iniciarLuta(JFrame janela, Supplier<Personagem> p1, Supplier<Personagem> p2) {
+        try {
+            PainelJogo painel = new PainelJogo(p1, p2, () -> mostrarMenu(janela));
+            trocarTela(janela, painel);
+            painel.iniciar();
+        } catch (IllegalStateException e) {
+            JOptionPane.showMessageDialog(janela, e.getMessage(), "Erro ao iniciar a luta", JOptionPane.ERROR_MESSAGE);
+            mostrarMenu(janela);
         }
+    }
+
+    private static void trocarTela(JFrame janela, javax.swing.JPanel painel) {
+        janela.setContentPane(painel);
+        janela.revalidate();
+        janela.repaint();
     }
 }
