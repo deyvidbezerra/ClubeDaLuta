@@ -23,10 +23,9 @@ separação clara entre **regras do jogo** e **parte visual**.
 7. [Documentação das classes](#7-documentação-das-classes)
 8. [Assets (sprites)](#8-assets-sprites)
 9. [Como adicionar um personagem novo](#9-como-adicionar-um-personagem-novo)
-10. [Versão por turnos (`MainLuta`)](#10-versão-por-turnos-mainluta)
-11. [Solução de problemas](#11-solução-de-problemas)
-12. [Limitações conhecidas e melhorias futuras](#12-limitações-conhecidas-e-melhorias-futuras)
-13. [Autor](#13-autor)
+10. [Solução de problemas](#10-solução-de-problemas)
+11. [Limitações conhecidas e melhorias futuras](#11-limitações-conhecidas-e-melhorias-futuras)
+12. [Autor](#12-autor)
 
 ---
 
@@ -159,7 +158,7 @@ Ative o `F3` para ver as duas caixas em tempo real (vermelha = corpo, laranja = 
 | **Crys** | Lutador: alcance curto, golpes rápidos e muita vida | 310 | 100 | 440 | 1100 | ⏳ sem sprites ainda |
 | **Jiu** | Espadachim: alcance médio-longo, golpes pesados | 290 | 100 | 400 | 1050 | ⏳ sem sprites ainda |
 
-> Crys e Jiu já existem como classes com todas as regras, mas ainda não têm sprites. Por isso só aparecem na [versão por turnos](#10-versão-por-turnos-mainluta).
+> Crys e Jiu já existem como classes com todas as regras, mas ainda não têm sprites. Por isso ainda não aparecem no menu de seleção.
 
 Velocidade em unidades do mundo por segundo. Tempos em segundos. **Ganho** = quanto o golpe carrega de especial ao acertar; **Custo** = quanto o golpe gasta.
 
@@ -208,7 +207,6 @@ ClubeDaLuta/
 ├── src/
 │   ├── Luta/
 │   │   ├── Main.java                 ← PONTO DE ENTRADA do jogo em tempo real
-│   │   ├── MainLuta.java             ← versão alternativa, por turnos (tem o próprio main)
 │   │   ├── Jogo/                     ← motor do jogo: tela, física, câmera, animação
 │   │   │   ├── MenuSelecao.java
 │   │   │   ├── PainelJogo.java
@@ -249,7 +247,7 @@ A pasta `out/` (arquivos compilados) e a `.idea/` (configuração do IntelliJ) s
 | `Personagem` (e subclasses) | **Regras** | vida, especial, dano, defesa, habilidades |
 | `Lutador` | **Visual e física** | posição, pulo, colisão, hitbox, animação |
 
-Assim dá para trocar a parte visual sem mexer nas regras. A própria versão por turnos (`MainLuta`) reaproveita `Personagem` e `Habilidade` sem alterar nada.
+Assim dá para trocar a parte visual sem mexer nas regras.
 
 ### Fluxo das telas
 
@@ -325,7 +323,6 @@ O conjunto `acionadas` é limpo ao final de cada `atualizar`. Quando a janela pe
 | Classe | Papel |
 |---|---|
 | **`Main`** | Ponto de entrada. Cria a janela na *thread* de eventos do Swing (`SwingUtilities.invokeLater`), mostra o `MenuSelecao` e troca para o `PainelJogo` quando os dois jogadores escolhem. Se algo falhar ao iniciar (ex.: sprite não encontrado), mostra uma caixa de erro. |
-| **`MainLuta`** | Versão alternativa **por turnos**, com `JComboBox`, botões e log de texto. Veja a [seção 10](#10-versão-por-turnos-mainluta). |
 
 ### Pacote `Luta.Personagem` (regras)
 
@@ -418,32 +415,12 @@ Exemplo: criar o personagem **Dragon**.
    - inclua `"dragon"` em `temSprites(...)`;
    - inclua um `case "dragon"` no `switch` de `carregar(...)`.
 4. **Menu.** Em `MenuSelecao.montarOpcoes()`, acrescente uma linha `opcoes.add(new Opcao("Dragon", Dragon::new, ...))` com o ícone e o retrato.
-5. **(Opcional)** Para aparecer na versão por turnos, inclua `Dragon::new` na lista `ELENCO` do `MainLuta`.
 
-> Se o personagem entrar no menu sem ter sprites carregados em `ConjuntoSprites`, a luta não consegue começar (veja [Limitações conhecidas](#12-limitações-conhecidas-e-melhorias-futuras)).
-
----
-
-## 10. Versão por turnos (`MainLuta`)
-
-O projeto também inclui uma versão **por turnos**, independente do modo em tempo real, que usa **os 4 personagens** (inclusive Crys e Jiu, que não precisam de sprites ali).
-
-Para executar, rode a classe `Luta.MainLuta`:
-
-- **IntelliJ:** abra `src/Luta/MainLuta.java` e clique no ▶ ao lado de `public class MainLuta`.
-- **Terminal:** depois de compilar, `java -cp "out:src" Luta.MainLuta` (no Windows, `"out;src"`).
-
-Como funciona:
-
-- Na tela inicial, escolha o modo **Jogador vs Jogador** ou **Jogador vs CPU** e o personagem de cada lado; depois clique em **LUTAR!**.
-- Um sorteio decide quem começa. A cada turno, quem está na vez escolhe **uma ação**: uma das 4 habilidades ou **Defender**.
-- A guarda dura até o próximo turno de quem defendeu e reduz o dano pela metade.
-- A CPU espera 0,9 s para jogar. Se consegue usar o **especial**, ela usa; caso contrário, tem 25% de chance de defender e, no restante, escolhe um golpe básico aleatório.
-- Um log mostra o que aconteceu a cada turno. Ao fim, é possível **Jogar novamente** ou **Sair**.
+> Se o personagem entrar no menu sem ter sprites carregados em `ConjuntoSprites`, a luta não consegue começar (veja [Limitações conhecidas](#11-limitações-conhecidas-e-melhorias-futuras)).
 
 ---
 
-## 11. Solução de problemas
+## 10. Solução de problemas
 
 | Problema | Causa provável e solução |
 |---|---|
@@ -456,15 +433,15 @@ Como funciona:
 
 ---
 
-## 12. Limitações conhecidas e melhorias futuras
+## 11. Limitações conhecidas e melhorias futuras
 
 **Hoje**
 
-- **Crys e Jiu não são jogáveis no modo em tempo real**, porque ainda não têm sprites. `ConjuntoSprites.carregar` lança `IllegalArgumentException` para eles, e o `Main` só trata `IllegalStateException`. Isso não acontece no uso normal, já que o menu só oferece Aqua e Keno, mas vale tratar os dois erros se um personagem sem sprites for incluído no menu.
+- **Crys e Jiu ainda não são jogáveis**, porque ainda não têm sprites. `ConjuntoSprites.carregar` lança `IllegalArgumentException` para eles, e o `Main` só trata `IllegalStateException`. Isso não acontece no uso normal, já que o menu só oferece Aqua e Keno, mas vale tratar os dois erros se um personagem sem sprites for incluído no menu.
 - O **Keno não tem animação parada** (*idle*): usa uma imagem estática (`keno_idle.png`).
 - O golpe 3 do Keno (**Pulo e chute**) ainda não tem sprite próprio: reutiliza o chute simples com um pequeno pulo visual.
 - O cronômetro é infinito: a luta só termina por K.O.
-- Não há modo contra a CPU no jogo em tempo real (só na versão por turnos), nem placar de vitórias, rounds ou som.
+- Não há modo contra a CPU, nem placar de vitórias, rounds ou som.
 
 **Ideias para evoluir**
 
@@ -477,7 +454,7 @@ Como funciona:
 
 ---
 
-## 13. Autor
+## 12. Autor
 
 Desenvolvido por **Deyvid** ([@deyvidbezerra](https://github.com/deyvidbezerra)).
 Repositório: <https://github.com/deyvidbezerra/ClubeDaLuta>
