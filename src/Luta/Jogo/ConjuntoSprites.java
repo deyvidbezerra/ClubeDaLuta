@@ -6,7 +6,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Todos os sprites de UM personagem: parado, golpes, defesa, dano, pulo e K.O.
+ * Todos os sprites de UM personagem: parado, andando, golpes, defesa, dano, pulo, esquiva e K.O.
  *
  * Os PNGs novos têm tamanhos diferentes (32x64, 64x64, 128x64) e o personagem não fica no
  * mesmo ponto em todos. Para o Lutador não precisar saber disso, cada imagem é copiada para uma
@@ -34,6 +34,9 @@ public final class ConjuntoSprites {
     /** Altura do corpo em pixels do sprite (define a hurtbox). */
     public final int alturaPx;
 
+    /** Animação de caminhada (4 quadros); null = o personagem anda na pose parada. */
+    public Animacao andar;
+
     // animação de cada golpe (índice 0..3); null = ainda sem sprite
     public final Animacao[] golpe = new Animacao[4];
     public final int[] quadroAtivoIni = new int[4];
@@ -45,6 +48,7 @@ public final class ConjuntoSprites {
     public BufferedImage guarda;
     public BufferedImage dano;
     public BufferedImage pulo;
+    public BufferedImage esquiva;   // pose usada na esquiva (o arquivo jump_and_dash serve para as duas)
     public BufferedImage derrotado;
 
     // efeitos
@@ -81,9 +85,14 @@ public final class ConjuntoSprites {
         ConjuntoSprites c = new ConjuntoSprites("Aqua",
                 new Animacao(padronizar(Animacao.carregarQuadros(base + "idle/", "aqua_idle", 6), ax, py), 0.14), 58);
 
+        // caminhada: aqua_walk0..3
+        c.andar = new Animacao(padronizar(Animacao.carregarQuadros(base + "aqua_walk/", "aqua_walk", 0, 3, 1), ax, py), 0.12);
+
         c.guarda = padronizar(Animacao.lerImagem(base + "aqua_guard.png"), ax, py);
         c.dano = padronizar(Animacao.lerImagem(base + "aqua_hurt.png"), ax, py);
-        c.pulo = padronizar(Animacao.lerImagem(base + "aqua_jump.png"), ax, py);
+        // a mesma pose serve para o pulo e para a esquiva
+        c.pulo = padronizar(Animacao.lerImagem(base + "aqua_jump_and_dash.png"), ax, py);
+        c.esquiva = c.pulo;
         // deitada: o centro do corpo está no meio do desenho e ela fica 4 px acima da linha dos pés
         c.derrotado = padronizar(Animacao.lerImagem(base + "aqua_defeated.png"), 33, 57);
 
@@ -126,11 +135,15 @@ public final class ConjuntoSprites {
 
         ConjuntoSprites c = new ConjuntoSprites("Keno", new Animacao(parado, 0.14), 51);
 
+        // caminhada: keno_walk0..3
+        c.andar = new Animacao(padronizar(Animacao.carregarQuadros(base + "keno_walk/", "keno_walk", 0, 3, 1), ax, py), 0.12);
+
         c.dano = padronizar(Animacao.lerImagem(base + "keno_hurt.png"), ax, py);
         c.derrotado = padronizar(Animacao.lerImagem(base + "keno_defeated.png"), 28.5, 64);
-        // no ar os pés ficam na linha 58 do PNG
-        BufferedImage puloNormal = padronizar(Animacao.lerImagem(base + "keno_jump.png"), 13, 58);
+        // no ar os pés ficam na linha 58 do PNG (a mesma pose serve para o pulo e para a esquiva)
+        BufferedImage puloNormal = padronizar(Animacao.lerImagem(base + "keno_jump_and_dash.png"), 13, 58);
         c.pulo = puloNormal;
+        c.esquiva = puloNormal;
 
         // 0: Chute -> o chute está no quadro 4 (índice 3)
         List<BufferedImage> chute = padronizar(Animacao.carregarQuadros(base + "keno_atack1/", "keno_atack", 0, 6, 1), ax, py);
@@ -143,7 +156,7 @@ public final class ConjuntoSprites {
         // 2: Pulo e chute -> ainda não veio sprite próprio: usa o chute simples com um pulinho visual
         c.definirGolpe(2, chute, 3, 3, EFEITO_NENHUM, 42);
 
-        // 3: especial -> começa saltando (keno_jump) e depois aparece keno_special (128x64, com as lâminas de vento)
+        // 3: especial -> começa saltando (jump) e depois aparece keno_special (128x64, com as lâminas de vento)
         List<BufferedImage> especial = new ArrayList<>();
         especial.add(puloNormal);
         BufferedImage sp = padronizar(Animacao.lerImagem(base + "keno_special.png"), 19, 64);

@@ -17,6 +17,7 @@ import java.awt.geom.Line2D;
 import java.awt.geom.Path2D;
 import java.awt.geom.Rectangle2D;
 import java.awt.image.BufferedImage;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -38,6 +39,35 @@ public class Lutador {
 
     // ===== física (velocidade e pulo agora vêm do Personagem) =====
     private static final double GRAVIDADE = 3000;
+    /** Velocidade com que os lutadores se afastam quando um deles está no ar e eles se sobrepõem. */
+    private static final double VELOCIDADE_SEPARACAO = 900;
+
+    // ===== esquiva (toque duplo para esquerda/direita) =====
+    private static final double DURACAO_ESQUIVA = 0.25;      // quanto tempo dura o deslize
+    private static final double VELOCIDADE_ESQUIVA = 1100;   // unidades por segundo (andar normal ~420)
+    private static final double INVULNERAVEL_ATE = 0.05;     // invulnerável enquanto restar mais que isso
+    private static final double RECARGA_ESQUIVA = 0.8;       // espera para poder esquivar de novo
+    private static final double EXTRA_MAX_ESQUIVA = 0.15;   // tempo extra (máx.) para terminar a travessia do oponente
+    private static final double INTERVALO_RASTRO = 0.03;     // de quanto em quanto tempo nasce um "fantasma"
+    private static final double VIDA_RASTRO = 0.30;          // quanto tempo cada fantasma demora para sumir
+
+    /** Uma "foto" do lutador deixada para trás durante a esquiva (o rastro). */
+    private static class Fantasma {
+        final double x;
+        final double y;
+        final double inclinacao;
+        final boolean paraDireita;
+        final BufferedImage quadro;
+        double idade;
+
+        Fantasma(double x, double y, double inclinacao, boolean paraDireita, BufferedImage quadro) {
+            this.x = x;
+            this.y = y;
+            this.inclinacao = inclinacao;
+            this.paraDireita = paraDireita;
+            this.quadro = quadro;
+        }
+    }
 
     private Personagem personagem;
     private ConjuntoSprites sprites;   // todas as poses/animações deste personagem
@@ -49,6 +79,7 @@ public class Lutador {
     private double empurrao;          // velocidade horizontal causada por golpes recebidos
     private boolean noChao;
     private boolean paraDireita;
+    private boolean andando;          // true enquanto está andando no chão (toca a animação de caminhada)
 
     // ===== combate =====
     private int golpeAtual = -1;      // -1 = não está golpeando
@@ -58,6 +89,14 @@ public class Lutador {
     private double impactoTempo;      // efeito de faísca no ponto do acerto
     private double impactoX;
     private double impactoY;
+
+    // ===== esquiva =====
+    private double esquivaTempo;      // tempo restante da esquiva (0 = não está esquivando)
+    private int esquivaDir;           // -1 esquerda, +1 direita
+    private double recargaEsquiva;    // tempo até poder esquivar de novo
+    private double extraEsquiva;      // tempo a mais que a esquiva durou para terminar de atravessar o oponente
+    private double tempoRastro;       // contador para criar o próximo fantasma
+    private final List<Fantasma> rastro = new ArrayList<>();
 
     public Lutador(Personagem personagem, double xInicial, boolean paraDireita) {
         resetar(personagem, xInicial, paraDireita);
@@ -76,14 +115,39 @@ public class Lutador {
         this.vy = 0;
         this.empurrao = 0;
         this.noChao = true;
+        this.andando = false;
         this.paraDireita = paraDireita;
         this.golpeAtual = -1;
         this.tempoGolpe = 0;
         this.atordoamento = 0;
         this.impactoTempo = 0;
+        this.esquivaTempo = 0;
+        this.recargaEsquiva = 0;
+        this.extraEsquiva = 0;
+        this.tempoRastro = 0;
+        this.rastro.clear();
     }
 
     // ===================== ATUALIZAÇÃO =====================
+
+    /**
+     * Pede uma esquiva (deslize rápido e invulnerável) para o lado indicado.
+     * Só funciona no chão, sem estar golpeando, atordoado, defendendo ou em recarga.
+     *
+     * @param direcao -1 esquerda, +1 direita (0 não faz nada)
+     */
+    public void esquivar(int direcao) {
+        if (direcao == 0 || !personagem.estaVivo()) return;
+        if (esquivaTempo > 0 || recargaEsquiva > 0) return;
+        if (!noChao || atordoamento > 0 || golpeAtual >= 0 || personagem.estaDefendendo()) return;
+
+        esquivaDir = direcao > 0 ? 1 : -1;
+        esquivaTempo = DURACAO_ESQUIVA;
+        recargaEsquiva = RECARGA_ESQUIVA;
+        tempoRastro = 0;   // cria o primeiro fantasma já no 1º quadro
+        extraEsquiva = 0;
+        empurrao = 0;
+    }
 
     /**
      * @param direcao      -1 esquerda, 0 parado, +1 direita
@@ -95,28 +159,39 @@ public class Lutador {
         sprites.idle.atualizar(dt);
         if (atordoamento > 0) atordoamento -= dt;
         if (impactoTempo > 0) impactoTempo -= dt;
+        if (recargaEsquiva > 0) recargaEsquiva -= dt;
+        atualizarRastro(dt);
 
         boolean vivo = personagem.estaVivo();
 
         // defesa: segurar o botão no chão reduz o dano à metade (regra está no Personagem)
-        if (vivo && golpeAtual < 0 && noChao && defender) personagem.defender();
+        if (vivo && golpeAtual < 0 && noChao && defender && esquivaTempo <= 0) personagem.defender();
         else personagem.iniciarTurno();
 
-        boolean livre = vivo && atordoamento <= 0 && golpeAtual < 0 && !personagem.estaDefendendo();
+        boolean livre = vivo && atordoamento <= 0 && golpeAtual < 0 && !personagem.estaDefendendo()
+                && esquivaTempo <= 0;
         if (livre && golpePedido >= 0) iniciarGolpe(golpePedido);
         boolean podeMover = livre && golpeAtual < 0;
+        andando = podeMover && direcao != 0 && noChao;
+        if (andando && sprites.andar != null) sprites.andar.atualizar(dt);
 
         // 1) movimento horizontal + colisões no eixo X
-        x += ((podeMover ? direcao : 0) * personagem.getVelocidade() + empurrao) * dt;
+        if (esquivaTempo > 0) {
+            x += esquivaDir * VELOCIDADE_ESQUIVA * dt;   // deslize da esquiva
+            esquivaTempo = Math.max(0, esquivaTempo - dt);
+            // a esquiva atravessa o oponente: só termina quando já estiver livre, nas costas dele
+            if (esquivaTempo <= 0 && sobrepoe(oponente) && extraEsquiva < EXTRA_MAX_ESQUIVA) {
+                esquivaTempo = 0.001;
+                extraEsquiva += dt;
+            }
+        } else {
+            x += ((podeMover ? direcao : 0) * personagem.getVelocidade() + empurrao) * dt;
+        }
         empurrao *= Math.exp(-9 * dt);
         if (Math.abs(empurrao) < 5) empurrao = 0;
 
         limitarNasParedes();
-        if (sobrepoe(oponente)) {
-            // empurra para fora, para o lado em que já estava
-            x = (x < oponente.x) ? oponente.esquerda() - LARGURA / 2 : oponente.direita() + LARGURA / 2;
-        }
-        limitarNasParedes();
+        separarDe(oponente, dt);
 
         // 2) pulo e gravidade
         if (pular && noChao && podeMover) {
@@ -132,23 +207,15 @@ public class Lutador {
             vy = 0;
             noChao = true;
         }
-        // ...e o outro lutador (pousar na cabeça dele / bater a cabeça nos pés dele)
-        if (sobrepoe(oponente)) {
-            if (vy >= 0) {
-                y = oponente.topo();
-                vy = 0;
-                noChao = true;
-            } else {
-                y = oponente.base() + altura;
-                vy = 0;
-            }
-        }
+        // ...e o outro lutador: NÃO dá mais para ficar em cima dele; quem cai na cabeça do outro
+        // escorrega para o lado (antes o lutador "pousava" na cabeça e ficava preso ali)
+        separarDe(oponente, dt);
 
         // 4) golpe em andamento (pode acertar o oponente)
         atualizarGolpe(dt, oponente);
 
-        // 5) sempre olhando para o adversário (menos no meio de um golpe ou depois de cair)
-        if (vivo && golpeAtual < 0) {
+        // 5) sempre olhando para o adversário (menos no meio de um golpe, de uma esquiva ou depois de cair)
+        if (vivo && golpeAtual < 0 && esquivaTempo <= 0) {
             if (oponente.x > x) paraDireita = true;
             else if (oponente.x < x) paraDireita = false;
         }
@@ -157,6 +224,59 @@ public class Lutador {
     private void limitarNasParedes() {
         x = Math.max(Cenario.MARGEM_PAREDE + LARGURA / 2,
                 Math.min(Cenario.LARGURA - Cenario.MARGEM_PAREDE - LARGURA / 2, x));
+    }
+
+    /**
+     * Tira este lutador de dentro do oponente, empurrando-o para o lado em que já estava.
+     * Se os dois estão no chão a separação é imediata; se algum está no ar, ele escorrega
+     * rapidamente (para não "teleportar" no meio de um pulo).
+     */
+    private void separarDe(Lutador o, double dt) {
+        if (esquivaTempo > 0 || o.esquivaTempo > 0) return;   // quem esquiva atravessa o outro
+        if (!sobrepoe(o)) return;
+
+        // lado em que este lutador deve ficar (se estiverem exatamente no mesmo x, vai para o lado do centro)
+        double lado = x < o.x ? -1 : (x > o.x ? 1 : (x < Cenario.LARGURA / 2 ? 1 : -1));
+        double alvo = o.x + lado * LARGURA;
+
+        if (noChao && o.noChao) {
+            x = alvo;
+        } else {
+            double passo = VELOCIDADE_SEPARACAO * dt;
+            x += Math.max(-passo, Math.min(passo, alvo - x));
+        }
+        limitarNasParedes();
+
+        // encostado na parede e ainda sobreposto: quem manda é a parede, então o oponente é empurrado
+        boolean naParede = x <= Cenario.MARGEM_PAREDE + LARGURA / 2 + 1e-6
+                || x >= Cenario.LARGURA - Cenario.MARGEM_PAREDE - LARGURA / 2 - 1e-6;
+        if (naParede && sobrepoe(o)) {
+            o.x = x - lado * LARGURA;
+            o.limitarNasParedes();
+        }
+    }
+
+    // ===================== ESQUIVA (rastro) =====================
+
+    public boolean estaEsquivando() { return esquivaTempo > 0; }
+
+    /** Durante quase toda a esquiva o lutador não pode ser atingido. */
+    private boolean invulneravel() { return esquivaTempo > INVULNERAVEL_ATE; }
+
+    private void atualizarRastro(double dt) {
+        for (int i = rastro.size() - 1; i >= 0; i--) {
+            Fantasma f = rastro.get(i);
+            f.idade += dt;
+            if (f.idade >= VIDA_RASTRO) rastro.remove(i);
+        }
+        if (esquivaTempo > 0) {
+            tempoRastro -= dt;
+            if (tempoRastro <= 0) {
+                tempoRastro = INTERVALO_RASTRO;
+                BufferedImage pose = sprites.esquiva != null ? sprites.esquiva : sprites.idle.getQuadro();
+                rastro.add(new Fantasma(x, y, sprites.esquiva != null ? 0 : esquivaDir * 0.15, paraDireita, pose));
+            }
+        }
     }
 
     // ===================== COMBATE =====================
@@ -178,7 +298,7 @@ public class Lutador {
         tempoGolpe += dt;
 
         boolean faseAtiva = tempoGolpe >= golpe.inicio && tempoGolpe <= golpe.inicio + golpe.ativo;
-        if (faseAtiva && !acertou && oponente.personagem.estaVivo()) {
+        if (faseAtiva && !acertou && oponente.personagem.estaVivo() && !oponente.invulneravel()) {
             Rectangle2D caixa = caixaDeAtaque(golpe);
             Rectangle2D corpo = oponente.corpo();
             if (caixa.intersects(corpo)) {
@@ -206,6 +326,7 @@ public class Lutador {
         empurrao = direcao * forca * (defendendo ? 0.5 : 1.0);
         if (!personagem.estaVivo()) empurrao = direcao * forca * 1.3;
         golpeAtual = -1;
+        esquivaTempo = 0;   // levou o golpe: a esquiva é interrompida
     }
 
     /** A hitbox do golpe: um retângulo à frente do corpo. */
@@ -237,6 +358,7 @@ public class Lutador {
 
     public void desenhar(Graphics2D g, boolean mostrarHitbox) {
         desenharSombra(g);
+        desenharRastro(g);
         desenharSprite(g);
         if (personagem.estaDefendendo() && sprites.guarda == null) desenharEscudo(g);   // com sprite de guarda o escudo já está desenhado nele
         desenharEfeitoDoGolpe(g);
@@ -254,6 +376,43 @@ public class Lutador {
             }
             g.setColor(Color.YELLOW);
             g.fill(new Ellipse2D.Double(x - 3, y - 3, 6, 6));
+        }
+    }
+
+    /** Rastro da esquiva: fantasmas translúcidos do lutador + linhas de velocidade. */
+    private void desenharRastro(Graphics2D g) {
+        if (rastro.isEmpty() && esquivaTempo <= 0) return;
+
+        AffineTransform original = g.getTransform();
+        Composite compositeOriginal = g.getComposite();
+        Stroke strokeOriginal = g.getStroke();
+
+        for (Fantasma f : rastro) {
+            float alfa = (float) (0.5 * (1 - f.idade / VIDA_RASTRO));
+            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, Math.max(0f, Math.min(1f, alfa))));
+            g.translate(f.x, f.y);
+            g.rotate(f.inclinacao);
+            if (f.paraDireita != SPRITE_OLHA_PARA_DIREITA) {
+                g.scale(-1, 1);
+            }
+            g.scale(ESCALA, ESCALA);
+            g.translate(-ConjuntoSprites.ANC_X, -ConjuntoSprites.ANC_Y);
+            g.drawImage(f.quadro, 0, 0, null);
+            g.setTransform(original);
+        }
+        g.setComposite(compositeOriginal);
+
+        if (esquivaTempo > 0) {
+            float forca = (float) Math.min(1, esquivaTempo / DURACAO_ESQUIVA);
+            g.setStroke(new BasicStroke(4f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g.setColor(new Color(220, 240, 255, (int) (200 * forca)));
+            for (int i = 0; i < 4; i++) {
+                double ly = y - 30 - i * 38;
+                double inicio = x - esquivaDir * (30 + i * 8);
+                double comprimento = 60 + (i % 2) * 40;
+                g.draw(new Line2D.Double(inicio, ly, inicio - esquivaDir * comprimento, ly));
+            }
+            g.setStroke(strokeOriginal);
         }
     }
 
@@ -297,8 +456,17 @@ public class Lutador {
             quadro = sprites.guarda;
         } else if (atordoamento > 0 && sprites.dano != null) {
             quadro = sprites.dano;
+        } else if (esquivaTempo > 0 && sprites.esquiva != null) {
+            quadro = sprites.esquiva;                      // pose de esquiva (jump_and_dash)
         } else if (!noChao && sprites.pulo != null) {
             quadro = sprites.pulo;
+        } else if (andando && sprites.andar != null) {
+            quadro = sprites.andar.getQuadro();            // caminhando
+        }
+
+        // esquivando sem pose própria: o corpo se inclina na direção do deslize
+        if (vivo && !golpeando && esquivaTempo > 0 && sprites.esquiva == null) {
+            inclinacao = esquivaDir * 0.15;
         }
 
         if (atordoamento > 0 && vivo) {

@@ -7,10 +7,12 @@ package Luta.Jogo;
 public class Cronometro {
 
     private final boolean infinito;
+    private final double duracao;
     private double restante;
 
     private Cronometro(boolean infinito, double segundos) {
         this.infinito = infinito;
+        this.duracao = segundos;
         this.restante = segundos;
     }
 
@@ -26,6 +28,15 @@ public class Cronometro {
         if (!infinito && restante > 0) {
             restante = Math.max(0, restante - dt);
         }
+    }
+
+    /** Volta o relógio para o tempo inicial (usado a cada novo round). */
+    public void reiniciar() {
+        restante = duracao;
+    }
+
+    public double getRestante() {
+        return restante;
     }
 
     public boolean acabou() {

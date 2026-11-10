@@ -19,7 +19,9 @@ import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.awt.geom.AffineTransform;
 import java.awt.geom.Path2D;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Supplier;
 
@@ -29,7 +31,8 @@ import java.util.function.Supplier;
  * Controles:
  *   Jogador 1: A / D mover, W pular, S defender, J K L I = habilidades 1 a 4 (4 = especial)
  *   Jogador 2: setas mover/pular, seta para baixo defender, 7 8 9 0 (ou NUMPAD 1-4) = habilidades 1 a 4
- *   R reinicia | M (ou ESC) volta ao menu de personagens | F3 liga/desliga o modo debug (hitboxes, zoom, FPS)
+ *   Melhor de 3 rounds (vence quem ganhar 2), cada round com 40 segundos
+ *   R reinicia a partida | M (ou ESC) volta ao menu | F3 liga/desliga o modo debug (hitboxes, zoom, FPS)
  */
 public class PainelJogo extends JPanel {
 
@@ -53,14 +56,30 @@ public class PainelJogo extends JPanel {
 
     private final Cenario cenario = new Cenario();
     private final Camera camera = new Camera();
-    private final Cronometro cronometro = Cronometro.infinito();
+    // ----- regras da partida: melhor de 3 rounds, 40 segundos cada -----
+    private static final int ROUNDS_PARA_VENCER = 2;
+    private static final int TEMPO_ROUND = 60;
+    private static final double DURACAO_INTRO = 1.8;       // "ROUND n" / "LUTE!"
+    private static final double DURACAO_FIM_ROUND = 3.0;   // pausa depois do K.O. / tempo esgotado
+
+    private enum Fase { INTRO, LUTANDO, FIM_DE_ROUND, FIM_DE_PARTIDA }
+
+    private Fase fase = Fase.INTRO;
+    private double tempoFase;
+    private int rodada = 1;
+    private int vitoriasP1;
+    private int vitoriasP2;
+    private int vencedorDoRound;       // 0 = empate, 1 = P1, 2 = P2
+    private boolean roundPorTempo;     // true = acabou no tempo, false = K.O.
+
+    private final Cronometro cronometro = Cronometro.contagem(TEMPO_ROUND);
     private final BarraDeVida barraP1 = new BarraDeVida(true);
     private final BarraDeVida barraP2 = new BarraDeVida(false);
 
     private final Lutador p1;
     private final Lutador p2;
 
-    // "fábricas": cada uma cria um Personagem novinho (vida cheia) a cada reinício da luta
+    // "fábricas": cada uma cria um Personagem novinho (vida cheia) a cada novo round
     private final Supplier<Personagem> fabricaP1;
     private final Supplier<Personagem> fabricaP2;
     private final Runnable aoVoltarAoMenu;
@@ -68,6 +87,11 @@ public class PainelJogo extends JPanel {
     // teclado: "pressionadas" = está segurando agora; "acionadas" = acabou de apertar (1 vez só)
     private final Set<Integer> pressionadas = new HashSet<>();
     private final Set<Integer> acionadas = new HashSet<>();
+
+    // toque duplo (esquiva): guarda em que momento cada tecla de direção foi apertada pela última vez
+    private static final double JANELA_TOQUE_DUPLO = 0.25;   // segundos entre os dois toques
+    private final Map<Integer, Double> ultimoToque = new HashMap<>();
+    private double relogio;
 
     private final Timer timer;
     private long ultimoQuadro;
@@ -134,14 +158,25 @@ public class PainelJogo extends JPanel {
     void atualizar(double dt) {
         if (tratarTeclasDeUmaVez()) return;   // true = saiu para o menu
 
-        int dir1 = (segurando(KeyEvent.VK_D) ? 1 : 0) - (segurando(KeyEvent.VK_A) ? 1 : 0);
-        int dir2 = (segurando(KeyEvent.VK_RIGHT) ? 1 : 0) - (segurando(KeyEvent.VK_LEFT) ? 1 : 0);
+        // fora da fase LUTANDO os controles ficam travados (os lutadores só terminam a animação)
+        boolean podeLutar = fase == Fase.LUTANDO;
 
-        int golpe1 = golpePedido(TECLAS_GOLPE_P1);
-        int golpe2 = golpePedido(TECLAS_GOLPE_P2);
+        relogio += dt;
+        if (podeLutar) {
+            p1.esquivar(toqueDuplo(KeyEvent.VK_A, KeyEvent.VK_D));
+            p2.esquivar(toqueDuplo(KeyEvent.VK_LEFT, KeyEvent.VK_RIGHT));
+        }
 
-        p1.atualizar(dt, dir1, segurando(KeyEvent.VK_W), golpe1, segurando(KeyEvent.VK_S), p2);
-        p2.atualizar(dt, dir2, segurando(KeyEvent.VK_UP), golpe2, segurando(KeyEvent.VK_DOWN), p1);
+        int dir1 = podeLutar ? (segurando(KeyEvent.VK_D) ? 1 : 0) - (segurando(KeyEvent.VK_A) ? 1 : 0) : 0;
+        int dir2 = podeLutar ? (segurando(KeyEvent.VK_RIGHT) ? 1 : 0) - (segurando(KeyEvent.VK_LEFT) ? 1 : 0) : 0;
+
+        int golpe1 = podeLutar ? golpePedido(TECLAS_GOLPE_P1) : -1;
+        int golpe2 = podeLutar ? golpePedido(TECLAS_GOLPE_P2) : -1;
+
+        p1.atualizar(dt, dir1, podeLutar && segurando(KeyEvent.VK_W), golpe1,
+                podeLutar && segurando(KeyEvent.VK_S), p2);
+        p2.atualizar(dt, dir2, podeLutar && segurando(KeyEvent.VK_UP), golpe2,
+                podeLutar && segurando(KeyEvent.VK_DOWN), p1);
 
         // câmera: enquadra a caixa que contém os dois lutadores (+ margens)
         double minX = Math.min(p1.esquerda(), p2.esquerda()) - MARGEM_LATERAL;
@@ -150,11 +185,102 @@ public class PainelJogo extends JPanel {
         double maxY = Cenario.CHAO_Y + MARGEM_BAIXO;
         camera.seguir(dt, minX, minY, maxX, maxY, larguraTela(), alturaTela());
 
-        cronometro.atualizar(dt);
+        if (podeLutar) cronometro.atualizar(dt);   // o tempo só corre durante a luta
+        atualizarFase(dt);
         barraP1.atualizar(dt, p1.getPersonagem());
         barraP2.atualizar(dt, p2.getPersonagem());
 
         acionadas.clear();   // as teclas "de uma vez só" valem apenas para este quadro
+    }
+
+    /** Controla a sequência: INTRO -> LUTANDO -> FIM_DE_ROUND -> (próximo round) ... -> FIM_DE_PARTIDA. */
+    private void atualizarFase(double dt) {
+        tempoFase += dt;
+        switch (fase) {
+            case INTRO:
+                if (tempoFase >= DURACAO_INTRO) mudarFase(Fase.LUTANDO);
+                break;
+            case LUTANDO:
+                verificarFimDoRound();
+                break;
+            case FIM_DE_ROUND:
+                if (tempoFase >= DURACAO_FIM_ROUND) iniciarProximoRound();
+                break;
+            default:
+                break;   // FIM_DE_PARTIDA espera o R
+        }
+    }
+
+    private void mudarFase(Fase nova) {
+        fase = nova;
+        tempoFase = 0;
+    }
+
+    private void verificarFimDoRound() {
+        boolean ko1 = !p1.getPersonagem().estaVivo();
+        boolean ko2 = !p2.getPersonagem().estaVivo();
+        boolean tempoEsgotado = cronometro.acabou();
+        if (!ko1 && !ko2 && !tempoEsgotado) return;
+
+        roundPorTempo = !ko1 && !ko2;
+        if (ko1 && ko2) {
+            vencedorDoRound = 0;
+        } else if (ko1) {
+            vencedorDoRound = 2;
+        } else if (ko2) {
+            vencedorDoRound = 1;
+        } else {
+            // acabou o tempo: ganha quem estiver com mais vida (em porcentagem)
+            double vida1 = p1.getPersonagem().getVida() / (double) p1.getPersonagem().getVidaMaxima();
+            double vida2 = p2.getPersonagem().getVida() / (double) p2.getPersonagem().getVidaMaxima();
+            vencedorDoRound = Math.abs(vida1 - vida2) < 1e-9 ? 0 : (vida1 > vida2 ? 1 : 2);
+        }
+
+        // empate dá ponto para os dois (double K.O.)
+        if (vencedorDoRound == 1 || vencedorDoRound == 0) vitoriasP1++;
+        if (vencedorDoRound == 2 || vencedorDoRound == 0) vitoriasP2++;
+
+        boolean acabouPartida = vitoriasP1 >= ROUNDS_PARA_VENCER || vitoriasP2 >= ROUNDS_PARA_VENCER;
+        mudarFase(acabouPartida ? Fase.FIM_DE_PARTIDA : Fase.FIM_DE_ROUND);
+    }
+
+    private void iniciarProximoRound() {
+        rodada++;
+        prepararRound();
+    }
+
+    private void reiniciarPartida() {
+        rodada = 1;
+        vitoriasP1 = 0;
+        vitoriasP2 = 0;
+        prepararRound();
+    }
+
+    /** Coloca os lutadores no lugar, enche a vida, zera o relógio e mostra "ROUND n". */
+    private void prepararRound() {
+        p1.resetar(fabricaP1.get(), POSICAO_P1, true);
+        p2.resetar(fabricaP2.get(), POSICAO_P2, false);
+        cronometro.reiniciar();
+        mudarFase(Fase.INTRO);
+    }
+
+    /**
+     * Detecta o toque duplo nas teclas de esquerda/direita.
+     * @return -1 (duplo na esquerda), +1 (duplo na direita) ou 0 (nada)
+     */
+    private int toqueDuplo(int teclaEsquerda, int teclaDireita) {
+        int[] teclas = {teclaEsquerda, teclaDireita};
+        int[] direcoes = {-1, 1};
+        for (int i = 0; i < teclas.length; i++) {
+            if (!acionou(teclas[i])) continue;
+            Double anterior = ultimoToque.get(teclas[i]);
+            if (anterior != null && relogio - anterior <= JANELA_TOQUE_DUPLO) {
+                ultimoToque.remove(teclas[i]);   // consumiu os dois toques
+                return direcoes[i];
+            }
+            ultimoToque.put(teclas[i], relogio);
+        }
+        return 0;
     }
 
     /** Qual habilidade (0..3) acabou de ser apertada? -1 se nenhuma. */
@@ -169,10 +295,7 @@ public class PainelJogo extends JPanel {
 
     /** @return true se o jogo foi encerrado (voltou ao menu) e o quadro não deve continuar. */
     private boolean tratarTeclasDeUmaVez() {
-        if (acionou(KeyEvent.VK_R)) {
-            p1.resetar(fabricaP1.get(), POSICAO_P1, true);
-            p2.resetar(fabricaP2.get(), POSICAO_P2, false);
-        }
+        if (acionou(KeyEvent.VK_R)) reiniciarPartida();
         if (acionou(KeyEvent.VK_M) || acionou(KeyEvent.VK_ESCAPE)) {
             parar();
             if (aoVoltarAoMenu != null) aoVoltarAoMenu.run();
@@ -228,13 +351,14 @@ public class PainelJogo extends JPanel {
         barraP1.desenhar(g, p1.getPersonagem(), margem, topo, larguraBarra, alturaBarra);
         barraP2.desenhar(g, p2.getPersonagem(), w - margem - larguraBarra, topo, larguraBarra, alturaBarra);
 
-        desenharKo(g, w, h);
         desenharTimer(g, w / 2 - larguraTimer / 2, topo - 12, larguraTimer, alturaBarra + 28);
+        desenharPlacar(g, w / 2, topo + alturaBarra + 34);
+        desenharMensagemDeFase(g, w, h);
 
         // legenda dos controles
         String[] linhas = {
-                "P1: A/D mover, W pular, S defender, J K L I golpes (I = especial)",
-                "P2: setas (\u2193 defende), 7 8 9 0 golpes (0 = especial)   |   R reiniciar   |   M menu   |   F3 debug"
+                "P1: A/D mover, W pular, S defender, J K L I golpes (I = especial)   |   toque duplo \u2190/\u2192 (A/D) = esquiva",
+                "P2: setas (\u2193 defende), 7 8 9 0 golpes (0 = especial)   |   R reiniciar partida   |   M menu   |   F3 debug"
         };
         g.setFont(new Font("SansSerif", Font.PLAIN, 12));
         FontMetrics fm = g.getFontMetrics();
@@ -249,35 +373,66 @@ public class PainelJogo extends JPanel {
         }
     }
 
-    private void desenharKo(Graphics2D g, int w, int h) {
-        boolean ko1 = !p1.getPersonagem().estaVivo();
-        boolean ko2 = !p2.getPersonagem().estaVivo();
-        if (!ko1 && !ko2) return;
+    /** Bolinhas de vitória de cada jogador (1P à esquerda do centro, 2P à direita). */
+    private void desenharPlacar(Graphics2D g, int centroX, int y) {
+        int raio = 7;
+        for (int i = 0; i < ROUNDS_PARA_VENCER; i++) {
+            desenharBolinha(g, centroX - 22 - i * 22, y, raio, i < vitoriasP1);
+            desenharBolinha(g, centroX + 22 + i * 22, y, raio, i < vitoriasP2);
+        }
+    }
 
-        String titulo = "K.O.!";
-        String vencedor = (ko1 && ko2) ? "EMPATE" : (ko2 ? "1P VENCEU" : "2P VENCEU");
+    private void desenharBolinha(Graphics2D g, int cx, int cy, int raio, boolean cheia) {
+        g.setColor(new Color(10, 10, 16, 200));
+        g.fillOval(cx - raio - 2, cy - raio - 2, 2 * raio + 4, 2 * raio + 4);
+        g.setColor(cheia ? new Color(255, 214, 90) : new Color(70, 74, 100));
+        g.fillOval(cx - raio, cy - raio, 2 * raio, 2 * raio);
+    }
 
-        g.setFont(new Font("SansSerif", Font.BOLD, 96));
-        FontMetrics fm = g.getFontMetrics();
-        int tx = (w - fm.stringWidth(titulo)) / 2;
+    private void desenharMensagemDeFase(Graphics2D g, int w, int h) {
         int ty = h / 2 - 10;
-        g.setColor(new Color(0, 0, 0, 200));
-        g.drawString(titulo, tx + 5, ty + 5);
-        g.setColor(new Color(255, 80, 70));
-        g.drawString(titulo, tx, ty);
+        switch (fase) {
+            case INTRO:
+                if (tempoFase < DURACAO_INTRO * 0.6) {
+                    desenharTextoCentral(g, w, ty, "ROUND " + rodada, 80, new Color(255, 244, 210));
+                } else {
+                    desenharTextoCentral(g, w, ty, "LUTE!", 96, new Color(255, 214, 90));
+                }
+                break;
+            case FIM_DE_ROUND:
+            case FIM_DE_PARTIDA:
+                String titulo = vencedorDoRound == 0 ? "DOUBLE K.O.!" : (roundPorTempo ? "TEMPO!" : "K.O.!");
+                desenharTextoCentral(g, w, ty, titulo, 96, new Color(255, 80, 70));
 
-        g.setFont(new Font("SansSerif", Font.BOLD, 30));
-        fm = g.getFontMetrics();
-        g.setColor(new Color(0, 0, 0, 200));
-        g.drawString(vencedor, (w - fm.stringWidth(vencedor)) / 2 + 2, ty + 52);
-        g.setColor(new Color(255, 244, 210));
-        g.drawString(vencedor, (w - fm.stringWidth(vencedor)) / 2, ty + 50);
+                String vencedor;
+                if (fase == Fase.FIM_DE_PARTIDA) {
+                    if (vitoriasP1 == vitoriasP2) vencedor = "PARTIDA EMPATADA";
+                    else vencedor = (vitoriasP1 > vitoriasP2 ? "1P" : "2P") + " VENCEU A PARTIDA";
+                } else {
+                    vencedor = vencedorDoRound == 0 ? "EMPATE"
+                            : (vencedorDoRound == 1 ? "1P" : "2P") + " VENCEU O ROUND";
+                }
+                desenharTextoCentral(g, w, ty + 50, vencedor, 30, new Color(255, 244, 210));
 
-        g.setFont(new Font("SansSerif", Font.PLAIN, 16));
-        fm = g.getFontMetrics();
-        String dica = "Pressione R para reiniciar";
-        g.setColor(new Color(230, 235, 245));
-        g.drawString(dica, (w - fm.stringWidth(dica)) / 2, ty + 82);
+                if (fase == Fase.FIM_DE_PARTIDA) {
+                    desenharTextoCentral(g, w, ty + 82, "Pressione R para jogar de novo", 16, new Color(230, 235, 245));
+                }
+                break;
+            default:
+                break;
+        }
+    }
+
+    /** Texto centralizado com sombra, no tamanho e cor pedidos. */
+    private void desenharTextoCentral(Graphics2D g, int w, int baseY, String texto, int tamanho, Color cor) {
+        g.setFont(new Font("SansSerif", tamanho >= 30 ? Font.BOLD : Font.PLAIN, tamanho));
+        FontMetrics fm = g.getFontMetrics();
+        int tx = (w - fm.stringWidth(texto)) / 2;
+        int sombra = Math.max(2, tamanho / 20);
+        g.setColor(new Color(0, 0, 0, 200));
+        g.drawString(texto, tx + sombra, baseY + sombra);
+        g.setColor(cor);
+        g.drawString(texto, tx, baseY);
     }
 
     private void desenharTimer(Graphics2D g, int x, int y, int w, int h) {
@@ -311,7 +466,8 @@ public class PainelJogo extends JPanel {
         int ty = y + (h + fm.getAscent() - fm.getDescent()) / 2 - (infinito ? 1 : 0);
         g.setColor(new Color(0, 0, 0, 180));
         g.drawString(texto, tx + 2, ty + 2);
-        g.setColor(cronometro.acabou() ? new Color(255, 90, 90) : new Color(255, 244, 210));
+        boolean urgente = !infinito && cronometro.getRestante() <= 10;
+        g.setColor(urgente ? new Color(255, 90, 90) : new Color(255, 244, 210));
         g.drawString(texto, tx, ty);
     }
 
